@@ -45,8 +45,9 @@ const PORT = process.env.PORT || 3000;
 
 const TARGET_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_VIDEO_DURATION = 60; // seconds
-const MAX_FILES = 10;
-const MAX_INPUT_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2 GB per file
+const MAX_FILES = 5;
+const MAX_INPUT_FILE_SIZE = 200 * 1024 * 1024; // 200 MB per file
+const MAX_TOTAL_UPLOAD_SIZE = 500 * 1024 * 1024; // 500 MB total upload size
 
 const UPLOAD_DIR = '/tmp/dnd-uploads';
 const OUTPUT_DIR = '/tmp/dnd-outputs';
@@ -74,15 +75,47 @@ function getMetadata(filePath) {
   );
 }
 
+/**
+ * Detect if an image is animated (GIF/WebP with multiple frames).
+ */
+async function isAnimated(filePath) {
+  try {
+    const meta = await getMetadata(filePath);
+    const videoStream = meta.streams.find(s => s.codec_type === 'video');
+    if (!videoStream) return false;
+
+    // Check for multiple frames or nb_frames
+    const nbFrames = parseInt(videoStream.nb_frames) || 0;
+    const nbReadFrames = parseInt(videoStream.nb_read_frames) || 0;
+
+    return nbFrames > 1 || nbReadFrames > 1;
+  } catch (err) {
+    // If probe fails, assume not animated
+    return false;
+  }
+}
+
 // ─── image compression ───────────────────────────────────────────────────────
 
 /**
  * Compress an image to JPEG iteratively until ≤ TARGET_SIZE.
  * Strategy: decrease JPEG quality (q:v 1-31) then scale down dimensions.
+ * Rejects animated GIF/WebP to avoid flattening.
  */
 async function compressImage(inputPath, sessionDir, originalName) {
+  const ext = getExt(originalName);
+
+  // Check for animation in GIF/WebP
+  if (ext === 'gif' || ext === 'webp') {
+    const animated = await isAnimated(inputPath);
+    if (animated) {
+      throw new Error('アニメーション GIF/WebP はサポートされていません (静止画像のみ)');
+    }
+  }
+
   const baseName = path.parse(originalName).name;
-  const outputPath = path.join(sessionDir, `${baseName}_compressed.jpg`);
+  const uniqueToken = `${Date.now()}_${uuidv4().split('-')[0]}`;
+  const outputPath = path.join(sessionDir, `${baseName}_${uniqueToken}_compressed.jpg`);
 
   // q:v scale for ffmpeg JPEG: 1 = highest quality (largest), 31 = lowest quality (smallest).
   // We iterate from high quality down to find the smallest file ≤ TARGET_SIZE.
@@ -130,7 +163,8 @@ async function compressImage(inputPath, sessionDir, originalName) {
  */
 async function compressVideo(inputPath, sessionDir, originalName) {
   const baseName = path.parse(originalName).name;
-  const outputPath = path.join(sessionDir, `${baseName}_compressed.mp4`);
+  const uniqueToken = `${Date.now()}_${uuidv4().split('-')[0]}`;
+  const outputPath = path.join(sessionDir, `${baseName}_${uniqueToken}_compressed.mp4`);
 
   const meta = await getMetadata(inputPath);
   const srcDuration = meta.format.duration || 0;
@@ -177,16 +211,69 @@ async function compressVideo(inputPath, sessionDir, originalName) {
 
 const sessions = new Map(); // id → { createdAt, dir }
 
-// Purge sessions older than 1 hour every 5 minutes
-setInterval(() => {
+/**
+ * Scan OUTPUT_DIR and reconstruct sessions from filesystem.
+ * Uses directory mtime as createdAt timestamp.
+ */
+function reconstructSessionsFromDisk() {
+  try {
+    const entries = fs.readdirSync(OUTPUT_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && UUID_RE.test(entry.name)) {
+        const dirPath = path.join(OUTPUT_DIR, entry.name);
+        const stats = fs.statSync(dirPath);
+        const createdAt = stats.mtimeMs;
+        sessions.set(entry.name, { createdAt, dir: dirPath });
+      }
+    }
+  } catch (err) {
+    console.error('Failed to reconstruct sessions from disk:', err.message);
+  }
+}
+
+/**
+ * Purge old sessions from both memory and disk.
+ */
+function purgeOldSessions() {
   const cutoff = Date.now() - 60 * 60 * 1000;
+
+  // Purge in-memory sessions
   for (const [id, s] of sessions) {
     if (s.createdAt < cutoff) {
       try { fs.rmSync(s.dir, { recursive: true, force: true }); } catch (_) {}
       sessions.delete(id);
     }
   }
-}, 5 * 60 * 1000);
+
+  // Scan filesystem for orphaned directories
+  try {
+    const entries = fs.readdirSync(OUTPUT_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && UUID_RE.test(entry.name)) {
+        const dirPath = path.join(OUTPUT_DIR, entry.name);
+        try {
+          const stats = fs.statSync(dirPath);
+          const createdAt = stats.mtimeMs;
+
+          if (createdAt < cutoff) {
+            fs.rmSync(dirPath, { recursive: true, force: true });
+            sessions.delete(entry.name);
+          }
+        } catch (_) {
+          // Directory might have been deleted already
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Failed to purge orphaned sessions:', err.message);
+  }
+}
+
+// Reconstruct sessions on startup
+reconstructSessionsFromDisk();
+
+// Purge sessions older than 1 hour every 5 minutes
+setInterval(purgeOldSessions, 5 * 60 * 1000);
 
 // ─── multer ──────────────────────────────────────────────────────────────────
 
@@ -198,13 +285,23 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: { files: MAX_FILES, fileSize: MAX_INPUT_FILE_SIZE },
-  fileFilter: (_req, file, cb) => {
+  fileFilter: (req, file, cb) => {
     const ext = getExt(file.originalname);
-    if (IMAGE_EXTS.has(ext) || VIDEO_EXTS.has(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error(`サポートされていないファイル形式: .${ext}`));
+    if (!IMAGE_EXTS.has(ext) && !VIDEO_EXTS.has(ext)) {
+      return cb(new Error(`サポートされていないファイル形式: .${ext}`));
     }
+
+    // Track cumulative upload size
+    if (!req.totalUploadSize) {
+      req.totalUploadSize = 0;
+    }
+    req.totalUploadSize += file.size || 0;
+
+    if (req.totalUploadSize > MAX_TOTAL_UPLOAD_SIZE) {
+      return cb(new Error(`合計アップロードサイズが上限 (${MAX_TOTAL_UPLOAD_SIZE / 1024 / 1024} MB) を超えています`));
+    }
+
+    cb(null, true);
   },
 });
 

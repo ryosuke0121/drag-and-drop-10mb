@@ -116,6 +116,17 @@ function escapeHtml(str) {
 }
 
 // ─── drag-and-drop ────────────────────────────────────────────────────────────
+
+// Global handlers to prevent accidental browser navigation
+window.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+});
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+});
+
 ['dragenter', 'dragover'].forEach((evt) => {
   dropZone.addEventListener(evt, (e) => {
     e.preventDefault();
