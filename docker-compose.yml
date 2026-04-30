@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  app:
+    build: ./app
+    ports:
+      - "3000:3000"
+    volumes:
+      - /tmp/dnd-uploads:/tmp/dnd-uploads
+      - /tmp/dnd-outputs:/tmp/dnd-outputs
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    restart: unless-stopped
+    # No CPU/memory limits → uses host PC resources fully
