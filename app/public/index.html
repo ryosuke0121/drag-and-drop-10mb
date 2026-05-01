@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>10MB 圧縮ツール</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="header-icon">🗜️</div>
+      <h1>10MB 圧縮ツール</h1>
+      <p class="subtitle">画像・動画をドラッグ＆ドロップするだけで 10MB 以下に自動圧縮</p>
+    </header>
+
+    <div class="info-bar">
+      <div class="info-item">
+        <span>📸</span>
+        <span>写真：最大 10 枚まで</span>
+      </div>
+      <div class="info-item">
+        <span>🎬</span>
+        <span>動画：1 分を超える場合は先頭 60 秒に自動カット</span>
+      </div>
+    </div>
+
+    <!-- Drop zone -->
+    <div class="drop-zone" id="dropZone">
+      <div class="drop-zone-inner">
+        <div class="drop-icon" id="dropIcon">📂</div>
+        <p class="drop-text">ここにファイルをドロップ</p>
+        <p class="drop-or">または</p>
+        <label class="btn btn-outline" for="fileInput">ファイルを選択する</label>
+        <input
+          type="file"
+          id="fileInput"
+          multiple
+          accept="image/*,video/*,.heic,.heif"
+          class="sr-only"
+        />
+        <p class="drop-formats">
+          対応形式：JPG・PNG・GIF・WebP・MP4・MOV・AVI・MKV など
+        </p>
+      </div>
+    </div>
+
+    <!-- Selected file list -->
+    <ul class="file-list hidden" id="fileList"></ul>
+
+    <!-- Action buttons -->
+    <div class="action-bar hidden" id="actionBar">
+      <button class="btn btn-ghost" id="clearBtn">🗑 クリア</button>
+      <button class="btn btn-primary" id="compressBtn">⚡ 圧縮する</button>
+    </div>
+
+    <!-- Progress -->
+    <div class="progress-card hidden" id="progressSection">
+      <div class="spinner"></div>
+      <p class="progress-label">圧縮中…</p>
+      <p class="progress-sub" id="progressSub">しばらくお待ちください</p>
+    </div>
+
+    <!-- Results -->
+    <div class="results-card hidden" id="resultsSection">
+      <h2 class="results-title">✅ 圧縮完了</h2>
+      <ul class="results-list" id="resultsList"></ul>
+      <div class="results-actions">
+        <button class="btn btn-primary" id="downloadAllBtn">📦 まとめてダウンロード (ZIP)</button>
+        <button class="btn btn-ghost" id="newBtn">↩ 新しく圧縮する</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
