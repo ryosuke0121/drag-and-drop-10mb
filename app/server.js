@@ -45,7 +45,7 @@ const PORT = process.env.PORT || 3000;
 
 const TARGET_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_VIDEO_DURATION = 60; // seconds
-const MAX_FILES = 5;
+const MAX_FILES = 10;
 const MAX_INPUT_FILE_SIZE = 200 * 1024 * 1024; // 200 MB per file
 const MAX_TOTAL_UPLOAD_SIZE = 500 * 1024 * 1024; // 500 MB total upload size
 
@@ -168,6 +168,12 @@ async function compressVideo(inputPath, sessionDir, originalName) {
 
   const meta = await getMetadata(inputPath);
   const srcDuration = meta.format.duration || 0;
+
+  // Validate duration: must be a valid positive number
+  if (!srcDuration || isNaN(srcDuration) || srcDuration <= 0) {
+    throw new Error('動画の長さを取得できませんでした。ファイルが破損しているか、サポートされていない形式の可能性があります。');
+  }
+
   const duration = Math.min(srcDuration, MAX_VIDEO_DURATION);
 
   // Calculate bitrate: 10 MB × 0.95 safety margin ÷ duration
